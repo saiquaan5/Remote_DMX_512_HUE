@@ -3,22 +3,24 @@
 #include <Wire.h>
 #include <string.h>
 
-#define ON_OFF 23
-#define TEST 13
-#define ENTER 14
-#define UP 18
-#define DOWN 19
-#define SET 5
-#define Buzzer 4
-#define PW 2
+#define ON_OFF                    23
+#define TEST                      13
+#define ENTER                     14
+#define UP                        18
+#define DOWN                      19
+#define SET                       5
+#define Buzzer                    4
+#define PW                        2
 
-#define CMD_Write_Add_To_Light 200
-#define CMD_Read_Add_From_Light 201
-#define CMD_Test_Red 202
-#define CMD_Test_Green 203
-#define CMD_Test_Blue 204
-#define CMD_Test_All 205
-#define CMD_Trans_Limit_Power 206
+#define CMD_Write_Add_To_Light    200
+#define CMD_Read_Add_From_Light   201
+#define CMD_Test_Red              202
+#define CMD_Test_Green            203
+#define CMD_Test_Blue             204
+#define CMD_Test_All              205
+#define CMD_Test_OFF              207
+#define CMD_Trans_Limit_Power     206
+#define CMD_Respond_To_Remote     208
 
 typedef struct __attribute__((packed))
 {
@@ -55,6 +57,12 @@ void readstruct(uint8_t *pt, uint8_t size)
   }
 }
 
+u8g2_uint_t offset;                             // current offset for the scrolling text
+u8g2_uint_t width;                              // pixel width of the scrolling text (must be lesser than 128 unless U8G2_16BIT is defined
+const char *text = "SIGNAL TECHNOLOGY CO.,LTD"; // scroll this text from right to left
+
+
+
 //uint16_t check_sum(uint8_t *cb, uint8_t siz)
 //{
 //  uint8_t sum =0;
@@ -67,6 +75,7 @@ void readstruct(uint8_t *pt, uint8_t size)
 //}
 
 //U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+
 U8G2_SH1106_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0, /* reset=*/U8X8_PIN_NONE);
 volatile bool is_touched_enter_key = false;
 volatile bool is_touched_up_key = false;
@@ -79,6 +88,17 @@ volatile bool is_recieved_add_IR = false;
 unsigned long time_begin = 0;
 
 void Buzzer_key();
+
+void drawText(void)
+{
+  u8g2_uint_t x = offset;
+  do
+  {  
+    u8g2.setFont(u8g2_font_6x13O_tr);                                   // repeated drawing of the scrolling text...
+    u8g2.drawUTF8(x, 19, text);         // draw the scolling text
+    x += width;                         // add the pixel width of the scrolling text
+  } while (x < u8g2.getDisplayWidth()); // draw again until the complete display is filled
+}
 
 void setup(void)
 {
@@ -123,9 +143,9 @@ struct menu_entry_type menu_entry_list[] =
         {u8g2_font_open_iconic_embedded_4x_t, 80, "Set Address"},
         {u8g2_font_open_iconic_embedded_4x_t, 67, "Read Address"},
         {u8g2_font_open_iconic_embedded_4x_t, 69, "Led Test"},
-        {u8g2_font_open_iconic_embedded_4x_t, 73, "Battery"},
         {u8g2_font_open_iconic_embedded_4x_t, 72, "Config Power"},
         {u8g2_font_open_iconic_embedded_4x_t, 78, "Lock Touch"},
+        {u8g2_font_open_iconic_embedded_4x_t, 73, "Battery"},
         {u8g2_font_open_iconic_embedded_4x_t, 77, "About"},
         {NULL, 0, NULL}};
 
@@ -260,6 +280,7 @@ struct menu_state destination_state = {ICON_BGAP, ICON_BGAP, 0};
 void loop(void)
 {
   long int address = 0;
+  uint8_t scale_power = 0;
   int8_t event;
   /*--------------------------------------------------------------------------------------------------------------------------------------------------------------*/
   do
@@ -369,6 +390,146 @@ void loop(void)
       if (strcmp(menu_entry_list[destination_state.position].name, "Config Power") == 0)
       {
         Serial.println("Select: Config Power");
+        u8g2_uint_t x = 0;
+        is_back_home = false;
+        while (!is_back_home)
+        {
+          Buzzer_key();
+          if (x == 0)
+            x = 128;
+          else
+            x--;
+
+          u8g2.firstPage();
+          do
+          {
+            /* assign a clip window and draw some text into it */
+            u8g2.setFont(u8g2_font_ncenB10_tr);
+            u8g2.setClipWindow(0, 0, 128, 18); /* upper left and lower right position */
+            u8g2.drawStr(x, 15, "SITECH DMX");
+
+            /* remove clip window, draw to complete screen */
+            u8g2.setMaxClipWindow();
+            u8g2.drawFrame(0, 2, 128, 15);
+
+            u8g2.setFont(u8g2_font_ncenB08_tr);
+            u8g2.setCursor(0, 40);
+            u8g2.print("Enter Scale:");
+            u8g2.setFont(u8g2_font_ncenB12_tr);
+            u8g2.setCursor(98, 40);
+            u8g2.print("%");
+
+            u8g2.setFont(u8g2_font_logisoso16_tn);
+            u8g2.setCursor(65, 40);
+            u8g2.print(scale_power);
+
+            u8g2.setFont(u8g2_font_ncenB10_tr);
+            u8g2.drawHLine(0, 50, 128);
+
+            u8g2.setFont(u8g2_font_ncenB08_tr);
+            u8g2.setCursor(2, 62);
+            u8g2.print("Up/Down -> SET ");
+          } while (u8g2.nextPage());
+
+          Buzzer_key();
+          if (digitalRead(ON_OFF))
+          {
+            while (digitalRead(ON_OFF));
+            is_back_home = true;
+          }
+          if (digitalRead(UP))
+          {
+            while (digitalRead(UP));
+            scale_power++;
+            if (scale_power > 100)
+            {
+              scale_power = 0;
+            }
+          }
+          if (digitalRead(DOWN))
+          {
+            while (digitalRead(DOWN));
+            scale_power--;
+            if (scale_power < 0)
+            {
+              scale_power = 100;
+            }
+          }
+          if (digitalRead(SET))
+          {
+            while (digitalRead(SET));
+
+            RxBuff_Irda.byte_start = 0xFE;
+            RxBuff_Irda.byte_CMD = CMD_Trans_Limit_Power;
+            RxBuff_Irda.byte_data = scale_power;
+            RxBuff_Irda.byte_end = 0XEF;
+
+            send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
+            Serial.println("Struct write address------------");
+
+            Serial.print("Byte start: ");
+            Serial.print(RxBuff_Irda.byte_start, HEX);
+            Serial.println();
+
+            Serial.print("Byte CMD: ");
+            Serial.print(RxBuff_Irda.byte_CMD, DEC);
+            Serial.println();
+
+            Serial.print("Data: ");
+            Serial.print(RxBuff_Irda.byte_data, DEC);
+            Serial.println();
+
+            Serial.print("Byte end: ");
+            Serial.print(RxBuff_Irda.byte_end, HEX);
+            Serial.println();
+
+            u8g2_uint_t x = 0;
+            is_back_set_address = false;
+            while (!is_back_set_address)
+            {
+              Buzzer_key();
+              if (x == 0)
+                x = 128;
+              else
+                x--;
+
+              u8g2.firstPage();
+              do
+              {
+                u8g2.setFont(u8g2_font_ncenB10_tr);
+                u8g2.setClipWindow(0, 0, 128, 18); /* upper left and lower right position */
+                u8g2.drawStr(x, 15, "SITECH DMX");
+
+                /* remove clip window, draw to complete screen */
+                u8g2.setMaxClipWindow();
+                u8g2.drawFrame(0, 2, 128, 15);
+
+                u8g2.setFont(u8g2_font_ncenB10_tr);
+                u8g2.setCursor(0, 30);
+                u8g2.print("Wait respond");
+
+                // u8g2.setFont(u8g2_font_ncenB10_tr);
+                // u8g2.setCursor(0, 50);
+                // u8g2.print("Address: ");
+
+                u8g2.setFont(u8g2_font_ncenB10_tr);
+                u8g2.drawHLine(0, 52, 128);
+
+                u8g2.setFont(u8g2_font_ncenB08_tr);
+                u8g2.setCursor(2, 64);
+                u8g2.print("Time out -> BACK ");
+              } while (u8g2.nextPage());
+
+              Buzzer_key();
+              if (digitalRead(ON_OFF))
+              {
+                while (digitalRead(ON_OFF))
+                  ;
+                is_back_set_address = true;
+              }
+            }
+          }
+        }
       }
       if (strcmp(menu_entry_list[destination_state.position].name, "Lock Touch") == 0)
       {
@@ -383,7 +544,8 @@ void loop(void)
             "ON LED RED\n"
             "ON LED GREEN\n"
             "ON LED BLUE\n"
-            "ON ALL";
+            "ON ALL\n"
+            "OFF";
         uint8_t current_selection = 1;
 
         while (!is_back_home)
@@ -445,6 +607,15 @@ void loop(void)
               RxBuff_Irda.byte_end = 0XEF;
               send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
             }
+            if (strcmp(temp, "OFF") == 0)
+            {
+              Serial.println("Turn off all");
+              RxBuff_Irda.byte_start = 0xFE;
+              RxBuff_Irda.byte_CMD = CMD_Test_OFF;
+              RxBuff_Irda.byte_data = 0;
+              RxBuff_Irda.byte_end = 0XEF;
+              send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
+            }
           }
           if (digitalRead(ON_OFF))
           {
@@ -456,6 +627,50 @@ void loop(void)
       if (strcmp(menu_entry_list[destination_state.position].name, "About") == 0)
       {
         Serial.println("Select: About");
+        is_back_home = false;
+
+        u8g2.setFont(u8g2_font_helvB18_tr);  // set the target font to calculate the pixel width
+        width = u8g2.getUTF8Width(text);    // calculate the pixel width of the text
+        u8g2.setFontMode(0);    // enable transparent mode, which is faster
+        u8g2.firstPage();
+        do
+        {
+          u8g2.drawUTF8(18, 30, "SITECH"); // This part will stay constantly on the screen
+        } while (u8g2.nextPage());
+
+        while (!is_back_home)
+        {
+          int i;
+          Buzzer_key();
+
+
+          for (i = 0; i < 3; i++)
+          {
+            // draw to lines 0...23 (3*8-1)
+            // draw to the upper part of the screen
+            u8g2.setBufferCurrTileRow(i);
+            u8g2.clearBuffer();
+            drawText();
+
+            // but write the buffer to the lower part (offset 4*8 = 32)
+            u8g2.setBufferCurrTileRow(4 + i);
+            u8g2.sendBuffer();
+          }
+
+          // calculate the new offset for the scrolling
+          offset -= 1; // scroll by one pixel
+          if ((u8g2_uint_t)offset < (u8g2_uint_t)-width)
+            offset = 0; // start over again
+
+          delay(10); // do some small delay
+
+          if (digitalRead(ON_OFF))
+          {
+            Buzzer_key();
+            while (digitalRead(ON_OFF));
+            is_back_home = true;
+          }
+        }
       }
       if (strcmp(menu_entry_list[destination_state.position].name, "Set Address") == 0)
       {
@@ -594,8 +809,7 @@ void loop(void)
               Buzzer_key();
               if (digitalRead(ON_OFF))
               {
-                while (digitalRead(ON_OFF))
-                  ;
+                while (digitalRead(ON_OFF));
                 is_back_set_address = true;
               }
             }
@@ -604,7 +818,7 @@ void loop(void)
       }
     }
 
-    delay(10);
+    // delay(10);
     continue;
     is_touched_down_key = false;
     is_touched_enter_key = false;
