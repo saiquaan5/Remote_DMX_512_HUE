@@ -3,24 +3,23 @@
 #include <Wire.h>
 #include <string.h>
 
-#define ON_OFF                    23
-#define TEST                      13
-#define ENTER                     14
-#define UP                        18
-#define DOWN                      19
-#define SET                       5
-#define Buzzer                    4
-#define PW                        2
+#define ON_OFF 23
+#define TEST 13
+#define ENTER 14
+#define UP 18
+#define DOWN 19
+#define SET 5
+#define Buzzer 4
+#define PW 2
 
-#define CMD_Write_Add_To_Light    200
-#define CMD_Read_Add_From_Light   201
-#define CMD_Test_Red              202
-#define CMD_Test_Green            203
-#define CMD_Test_Blue             204
-#define CMD_Test_All              205
-#define CMD_Test_OFF              207
-#define CMD_Trans_Limit_Power     206
-#define CMD_Respond_To_Remote     208
+#define CMD_Write_Add_To_Light 200
+#define CMD_Read_Add_From_Light 201
+#define CMD_Test_Red 202
+#define CMD_Test_Green 203
+#define CMD_Test_Blue 204
+#define CMD_Test_All 205
+#define CMD_Trans_Limit_Power 206
+#define CMD_Respond_To_Remote 208
 
 typedef struct __attribute__((packed))
 {
@@ -31,7 +30,6 @@ typedef struct __attribute__((packed))
 } RxBuff_Irda_t;
 
 RxBuff_Irda_t RxBuff_Irda;
-RxBuff_Irda_t RxBuff_Irda_recieve;
 
 void send_struct(uint8_t *cb, uint8_t siz)
 {
@@ -42,17 +40,17 @@ void send_struct(uint8_t *cb, uint8_t siz)
     buffer_send++;
   }
 }
-
-const uint8_t READ_BUF_SIZE = 3;
-uint8_t readBufOffset = 0;
-char readBuf[READ_BUF_SIZE];
+RxBuff_Irda_t RxBuff_Irda_recieve;
+uint8_t inBuf[sizeof(RxBuff_Irda_t)];
+uint8_t offset_index = 0;
 
 void readstruct(uint8_t *pt, uint8_t size)
 {
   uint16_t i = 0;
+  uint8_t indRX = 0;
   for (i = 0; i < size; i++)
   {
-    *pt = readBuf[readBufOffset++];
+    *pt = inBuf[indRX++];
     pt++;
   }
 }
@@ -60,8 +58,6 @@ void readstruct(uint8_t *pt, uint8_t size)
 u8g2_uint_t offset;                             // current offset for the scrolling text
 u8g2_uint_t width;                              // pixel width of the scrolling text (must be lesser than 128 unless U8G2_16BIT is defined
 const char *text = "SIGNAL TECHNOLOGY CO.,LTD"; // scroll this text from right to left
-
-
 
 //uint16_t check_sum(uint8_t *cb, uint8_t siz)
 //{
@@ -83,7 +79,9 @@ volatile bool is_touched_down_key = false;
 
 volatile bool is_back_home = false;
 volatile bool is_back_set_address = false;
-volatile bool is_recieved_add_IR = false;
+volatile bool is_back_respone_Address = false;
+
+volatile bool is_finish_data_respone = false;
 
 unsigned long time_begin = 0;
 
@@ -93,8 +91,8 @@ void drawText(void)
 {
   u8g2_uint_t x = offset;
   do
-  {  
-    u8g2.setFont(u8g2_font_6x13O_tr);                                   // repeated drawing of the scrolling text...
+  {
+    u8g2.setFont(u8g2_font_6x13O_tr);   // repeated drawing of the scrolling text...
     u8g2.drawUTF8(x, 19, text);         // draw the scolling text
     x += width;                         // add the pixel width of the scrolling text
   } while (x < u8g2.getDisplayWidth()); // draw again until the complete display is filled
@@ -277,17 +275,34 @@ uint8_t towards(struct menu_state *current, struct menu_state *destination)
 struct menu_state current_state = {ICON_BGAP, ICON_BGAP, 0};
 struct menu_state destination_state = {ICON_BGAP, ICON_BGAP, 0};
 
+int Listening_respone_IR()
+{
+  memset(inBuf, 0, 4);
+  while (Serial2.available())
+  {
+    uint8_t c = Serial2.read();
+    //    Serial.println(c, HEX);
+    inBuf[offset_index++] = c;
+    if (offset_index == 4)
+    {
+      offset_index = 0;
+      Serial.println("OK");
+      return 1;
+    }
+  }
+  return 0;
+}
+
 void loop(void)
 {
-  long int address = 0;
-  uint8_t scale_power = 0;
+  long int address = 1;
+  long int scale_power = 0;
   int8_t event;
   /*--------------------------------------------------------------------------------------------------------------------------------------------------------------*/
   do
   {
     Buzzer_key();
     u8g2.firstPage();
-
     do
     {
       draw(&current_state);
@@ -350,8 +365,7 @@ void loop(void)
           Buzzer_key();
           if (digitalRead(ON_OFF))
           {
-            while (digitalRead(ON_OFF))
-              ;
+            while (digitalRead(ON_OFF));
             is_back_home = true;
           }
           if (i < 0)
@@ -359,27 +373,66 @@ void loop(void)
             i = 0;
             RxBuff_Irda.byte_start = 0xFE;
             RxBuff_Irda.byte_CMD = CMD_Read_Add_From_Light;
-            RxBuff_Irda.byte_data = 254;
+            RxBuff_Irda.byte_data = 0;
             RxBuff_Irda.byte_end = 0XEF;
-
             send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
-            Serial.println("Struct write address------------");
+            Serial.println("Send CMD Read address");
+          }
 
-            Serial.print("Byte start: ");
-            Serial.print(RxBuff_Irda.byte_start, HEX);
-            Serial.println();
+          Buzzer_key();
+          if (Listening_respone_IR())
+          {
+            readstruct((uint8_t *)&RxBuff_Irda_recieve, sizeof(RxBuff_Irda_t));
+            if (RxBuff_Irda_recieve.byte_start != 0xFE)
+            {
+              continue;
+            }
+            if (RxBuff_Irda_recieve.byte_end != 0xEF)
+            {
+              continue;
+            }
+            if (RxBuff_Irda_recieve.byte_CMD == CMD_Read_Add_From_Light)
+            {
+              Serial.print("Data ID recive: ");
+              Serial.println(RxBuff_Irda_recieve.byte_data, DEC);
+              is_back_respone_Address = false;
+              delay(2000);
+              while(!is_back_respone_Address)
+              {
+                u8g2.firstPage();
+                do
+                {
+                  Buzzer_key();
+                  /* assign a clip window and draw some text into it */
+                  u8g2.setFont(u8g2_font_ncenB08_tr);
+                  u8g2.setCursor(16, 13);
+                  u8g2.print("SITECH DMX 512");
+                  u8g2.drawFrame(0, 2, 128, 15);
 
-            Serial.print("Byte CMD: ");
-            Serial.print(RxBuff_Irda.byte_CMD, DEC);
-            Serial.println();
+                  u8g2.setFont(u8g2_font_ncenB10_tr);
+                  u8g2.setCursor(0, 40);
+                  u8g2.print("Address is: ");
+                  u8g2.setFont(u8g2_font_logisoso16_tn);
+                  u8g2.setCursor(90, 40);
+                  u8g2.print(RxBuff_Irda_recieve.byte_data);
 
-            Serial.print("Data: ");
-            Serial.print(RxBuff_Irda.byte_data, DEC);
-            Serial.println();
+                  u8g2.setFont(u8g2_font_ncenB10_tr);
+                  u8g2.drawHLine(0, 50, 128);
 
-            Serial.print("Byte end: ");
-            Serial.print(RxBuff_Irda.byte_end, HEX);
-            Serial.println();
+                  u8g2.setFont(u8g2_font_ncenB08_tr);
+                  u8g2.setCursor(2, 62);
+                  u8g2.print("Time Out -> BACK");
+
+                } while (u8g2.nextPage());
+                if (digitalRead(ON_OFF))
+                {
+                  Buzzer_key();
+                  while (digitalRead(ON_OFF));
+                  is_back_respone_Address = true;
+                  is_back_home = true;
+                }
+              }
+            }
           }
         }
       }
@@ -439,6 +492,7 @@ void loop(void)
           }
           if (digitalRead(UP))
           {
+            Buzzer_key();
             while (digitalRead(UP));
             scale_power++;
             if (scale_power > 100)
@@ -448,6 +502,7 @@ void loop(void)
           }
           if (digitalRead(DOWN))
           {
+            Buzzer_key();
             while (digitalRead(DOWN));
             scale_power--;
             if (scale_power < 0)
@@ -465,7 +520,7 @@ void loop(void)
             RxBuff_Irda.byte_end = 0XEF;
 
             send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
-            Serial.println("Struct write address------------");
+            Serial.println("Struct write config Power------------");
 
             Serial.print("Byte start: ");
             Serial.print(RxBuff_Irda.byte_start, HEX);
@@ -544,8 +599,7 @@ void loop(void)
             "ON LED RED\n"
             "ON LED GREEN\n"
             "ON LED BLUE\n"
-            "ON ALL\n"
-            "OFF";
+            "ON ALL";
         uint8_t current_selection = 1;
 
         while (!is_back_home)
@@ -607,19 +661,11 @@ void loop(void)
               RxBuff_Irda.byte_end = 0XEF;
               send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
             }
-            if (strcmp(temp, "OFF") == 0)
-            {
-              Serial.println("Turn off all");
-              RxBuff_Irda.byte_start = 0xFE;
-              RxBuff_Irda.byte_CMD = CMD_Test_OFF;
-              RxBuff_Irda.byte_data = 0;
-              RxBuff_Irda.byte_end = 0XEF;
-              send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
-            }
           }
           if (digitalRead(ON_OFF))
           {
-            while (digitalRead(ON_OFF));
+            while (digitalRead(ON_OFF))
+              ;
             is_back_home = true;
           }
         }
@@ -629,9 +675,9 @@ void loop(void)
         Serial.println("Select: About");
         is_back_home = false;
 
-        u8g2.setFont(u8g2_font_helvB18_tr);  // set the target font to calculate the pixel width
+        u8g2.setFont(u8g2_font_helvB18_tr); // set the target font to calculate the pixel width
         width = u8g2.getUTF8Width(text);    // calculate the pixel width of the text
-        u8g2.setFontMode(0);    // enable transparent mode, which is faster
+        u8g2.setFontMode(0);                // enable transparent mode, which is faster
         u8g2.firstPage();
         do
         {
@@ -642,7 +688,6 @@ void loop(void)
         {
           int i;
           Buzzer_key();
-
 
           for (i = 0; i < 3; i++)
           {
@@ -667,7 +712,8 @@ void loop(void)
           if (digitalRead(ON_OFF))
           {
             Buzzer_key();
-            while (digitalRead(ON_OFF));
+            while (digitalRead(ON_OFF))
+              ;
             is_back_home = true;
           }
         }
@@ -716,34 +762,34 @@ void loop(void)
           Buzzer_key();
           if (digitalRead(ON_OFF))
           {
-            while (digitalRead(ON_OFF))
-              ;
+            Buzzer_key();
+            while (digitalRead(ON_OFF));
             is_back_home = true;
           }
           if (digitalRead(UP))
           {
-            while (digitalRead(UP))
-              ;
+            Buzzer_key();
+            while (digitalRead(UP));
             address++;
             if (address > 170)
             {
-              address = 0;
+              address = 1;
             }
           }
           if (digitalRead(DOWN))
           {
-            while (digitalRead(DOWN))
-              ;
+            Buzzer_key();
+            while (digitalRead(DOWN));
             address--;
-            if (address < 0)
+            if (address < 1)
             {
               address = 170;
             }
           }
           if (digitalRead(SET))
           {
-            while (digitalRead(SET))
-              ;
+            Buzzer_key();
+            while (digitalRead(SET));
 
             RxBuff_Irda.byte_start = 0xFE;
             RxBuff_Irda.byte_CMD = CMD_Write_Add_To_Light;
@@ -751,23 +797,23 @@ void loop(void)
             RxBuff_Irda.byte_end = 0XEF;
 
             send_struct((uint8_t *)&RxBuff_Irda, sizeof(RxBuff_Irda_t));
-            Serial.println("Struct write address------------");
+        //     // Serial.println("Struct write address------------");
 
-            Serial.print("Byte start: ");
-            Serial.print(RxBuff_Irda.byte_start, HEX);
-            Serial.println();
+        //     // Serial.print("Byte start: ");
+        //     // Serial.print(RxBuff_Irda.byte_start, HEX);
+        //     // Serial.println();
 
-            Serial.print("Byte CMD: ");
-            Serial.print(RxBuff_Irda.byte_CMD, DEC);
-            Serial.println();
+        //     // Serial.print("Byte CMD: ");
+        //     // Serial.print(RxBuff_Irda.byte_CMD, DEC);
+        //     // Serial.println();
 
-            Serial.print("Data: ");
-            Serial.print(RxBuff_Irda.byte_data, DEC);
-            Serial.println();
+        //     // Serial.print("Data: ");
+        //     // Serial.print(RxBuff_Irda.byte_data, DEC);
+        //     // Serial.println();
 
-            Serial.print("Byte end: ");
-            Serial.print(RxBuff_Irda.byte_end, HEX);
-            Serial.println();
+        //     // Serial.print("Byte end: ");
+        //     // Serial.print(RxBuff_Irda.byte_end, HEX);
+        //     // Serial.println();
 
             u8g2_uint_t x = 0;
             is_back_set_address = false;
@@ -796,7 +842,7 @@ void loop(void)
 
                 u8g2.setFont(u8g2_font_ncenB10_tr);
                 u8g2.setCursor(0, 50);
-                u8g2.print("Address: ");
+                u8g2.print("Write Address");
 
                 u8g2.setFont(u8g2_font_ncenB10_tr);
                 u8g2.drawHLine(0, 52, 128);
@@ -809,16 +855,98 @@ void loop(void)
               Buzzer_key();
               if (digitalRead(ON_OFF))
               {
+                Buzzer_key();
                 while (digitalRead(ON_OFF));
                 is_back_set_address = true;
               }
-            }
-          }
+              if (Listening_respone_IR())
+              {
+                readstruct((uint8_t *)&RxBuff_Irda_recieve, sizeof(RxBuff_Irda_t));
+        //         // Serial.print("Byte start: ");
+        //         // Serial.print(RxBuff_Irda_recieve.byte_start, HEX);
+        //         // Serial.println();
+
+        //         // Serial.print("Byte CMD: ");
+        //         // Serial.print(RxBuff_Irda_recieve.byte_CMD, DEC);
+        //         // Serial.println();
+
+        //         // Serial.print("Data: ");
+        //         // Serial.print(RxBuff_Irda_recieve.byte_data, DEC);
+        //         // Serial.println();
+
+        //         // Serial.print("Byte end: ");
+        //         // Serial.print(RxBuff_Irda_recieve.byte_end, HEX);
+        //         // Serial.println();
+
+                if (RxBuff_Irda_recieve.byte_start != 0xFE)
+                {
+                  continue;
+                }
+                if (RxBuff_Irda_recieve.byte_end != 0xEF)
+                {
+                  continue;
+                }
+                if (RxBuff_Irda_recieve.byte_CMD == CMD_Respond_To_Remote)
+                {
+                  delay(2000);
+                  if (RxBuff_Irda_recieve.byte_data)
+                  {
+                    u8g2_uint_t x = 0;
+                    is_back_respone_Address = false;
+                    while (!is_back_respone_Address)
+                    {
+                      Buzzer_key();
+                      if (x == 0)
+                        x = 128;
+                      else
+                        x--;
+                      u8g2.firstPage();
+                      do
+                      {
+                        u8g2.setFont(u8g2_font_ncenB10_tr);
+                        u8g2.setClipWindow(0, 0, 128, 18); /* upper left and lower right position */
+                        u8g2.drawStr(x, 15, "SITECH DMX");
+
+                        /* remove clip window, draw to complete screen */
+                        u8g2.setMaxClipWindow();
+                        u8g2.drawFrame(0, 2, 128, 15);
+
+                        u8g2.setFont(u8g2_font_ncenB10_tr);
+                        u8g2.setCursor(0, 30);
+                        u8g2.print("Write Address");
+
+                        u8g2.setFont(u8g2_font_ncenB10_tr);
+                        u8g2.setCursor(0, 50);
+                        u8g2.print("Success -> BACK");
+
+                        // u8g2.setFont(u8g2_font_ncenB10_tr);
+                        // u8g2.drawHLine(0, 52, 128);
+
+                        // u8g2.setFont(u8g2_font_ncenB08_tr);
+                        // u8g2.setCursor(2, 64);
+                        // u8g2.print("Time out -> BACK ");
+                      } while (u8g2.nextPage());
+
+                      if (digitalRead(ON_OFF))
+                      {
+                        Buzzer_key();
+                        while (digitalRead(ON_OFF));
+                        is_back_respone_Address = true;
+                        is_back_set_address = true;
+                      }
+                    }
+                  }
+                  else
+                  {
+                    continue;
+                  }
+                } // IF check data read ir ok
+              } // If listen IR
+            } // While set respone
+          } // If set
         }
       }
     }
-
-    // delay(10);
     continue;
     is_touched_down_key = false;
     is_touched_enter_key = false;
@@ -826,19 +954,19 @@ void loop(void)
   } while (towards(&current_state, &destination_state));
 }
 
-/*------------------------------------------------------------------------------------------------HAM CON-------------------------------------------------------------*/
+  /*------------------------------------------------------------------------------------------------HAM CON-------------------------------------------------------------*/
 
-void Buzzer_key()
-{
-  int touchState = digitalRead(ON_OFF) | digitalRead(TEST) | digitalRead(ENTER) | digitalRead(UP) | digitalRead(DOWN) | digitalRead(SET); // read new state
-  if (touchState == HIGH)
+  void Buzzer_key()
   {
-    digitalWrite(Buzzer, HIGH); // turn on Piezo Buzzer
+    int touchState = digitalRead(ON_OFF) | digitalRead(TEST) | digitalRead(ENTER) | digitalRead(UP) | digitalRead(DOWN) | digitalRead(SET); // read new state
+    if (touchState == HIGH)
+    {
+      digitalWrite(Buzzer, HIGH); // turn on Piezo Buzzer
+    }
+    else if (touchState == LOW)
+    {
+      digitalWrite(Buzzer, LOW); // turn off Piezo Buzzer
+    }
   }
-  else if (touchState == LOW)
-  {
-    digitalWrite(Buzzer, LOW); // turn off Piezo Buzzer
-  }
-}
 
-/*------------------------------------------------------------------------------------------------HAM CON-------------------------------------------------------------*/
+  /*------------------------------------------------------------------------------------------------HAM CON-------------------------------------------------------------*/
